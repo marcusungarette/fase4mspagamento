@@ -65,32 +65,45 @@ public class ProcessPaymentUsecase {
             String transactionId = externalPaymentService.processPayment(savedPayment);
             logger.info("Pagamento enviado para processamento externo, transactionId: {}", transactionId);
 
-            // Como nosso mock sempre aprova o pagamento imediatamente,
+            // Como nosso mock define o status imediatamente,
             // podemos verificar o status e atualizar no banco de dados
-            // Em um cenário real, isso seria feito pelo callback
             String status = externalPaymentService.checkStatus(transactionId);
+            logger.info("Status retornado pelo serviço externo: {}", status);
+
+            // Criar versão atualizada do pagamento com base no status retornado
+            PaymentStatus newStatus;
+            String newMessage;
 
             if (status.equals(PaymentStatus.APPROVED.name())) {
+                newStatus = PaymentStatus.APPROVED;
+                newMessage = "Pagamento aprovado pelo serviço externo";
                 logger.info("Pagamento aprovado pelo serviço externo, atualizando no banco");
-
-                // Criar versão atualizada do pagamento
-                Payment updatedPayment = new Payment(
-                        savedPayment.getId(),
-                        savedPayment.getExternalId(),
-                        savedPayment.getAmount(),
-                        savedPayment.getCreditCardNumber(),
-                        savedPayment.getOrderId(),
-                        savedPayment.getCallbackUrl(),
-                        PaymentStatus.APPROVED,  // Status atualizado
-                        "Pagamento aprovado pelo serviço externo",  // Mensagem atualizada
-                        savedPayment.getCreatedAt(),
-                        LocalDateTime.now()  // Timestamp atualizado
-                );
-
-                // Salvar a versão atualizada
-                savedPayment = paymentGateway.save(updatedPayment);
-                logger.info("Pagamento atualizado com status: {}", savedPayment.getStatus());
+            } else if (status.equals(PaymentStatus.REJECTED.name())) {
+                newStatus = PaymentStatus.REJECTED;
+                newMessage = "Pagamento rejeitado pelo serviço externo: valor excede o limite permitido";
+                logger.warn("Pagamento rejeitado pelo serviço externo, atualizando no banco");
+            } else {
+                // Status desconhecido ou PENDING, mantém como PENDING
+                return savedPayment;
             }
+
+            // Criar versão atualizada do pagamento
+            Payment updatedPayment = new Payment(
+                    savedPayment.getId(),
+                    savedPayment.getExternalId(),
+                    savedPayment.getAmount(),
+                    savedPayment.getCreditCardNumber(),
+                    savedPayment.getOrderId(),
+                    savedPayment.getCallbackUrl(),
+                    newStatus,  // Status atualizado conforme retorno do serviço
+                    newMessage, // Mensagem atualizada conforme status
+                    savedPayment.getCreatedAt(),
+                    LocalDateTime.now()  // Timestamp atualizado
+            );
+
+            // Salvar a versão atualizada
+            savedPayment = paymentGateway.save(updatedPayment);
+            logger.info("Pagamento atualizado com status: {}", savedPayment.getStatus());
 
         } catch (Exception e) {
             logger.error("Erro ao enviar pagamento para processamento externo", e);
